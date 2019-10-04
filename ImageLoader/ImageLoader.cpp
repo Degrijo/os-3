@@ -28,7 +28,6 @@ CRITICAL_SECTION file;
 Queue queue(8);
 
 SOCKET establishConnection(string, string);
-void download(int);
 void WriteLogFile(string, int);
 unsigned __stdcall downloadImg(void* pArg);
 unsigned __stdcall runThreadPool(void* pArg);
@@ -40,18 +39,19 @@ int main()
 {
 	CreateDirectoryA(imgDir, 0);
 	InitializeCriticalSection(&console);
+	InitializeCriticalSection(&file);
 	unsigned int qThreadID=0;
 	string url = "";
-	unsigned int numLink = 0;
+	unsigned int numLink = -1;
 	HANDLE threadsHandler = (HANDLE)_beginthreadex(NULL, 0, runThreadPool, NULL, 0, &qThreadID);
 	while (true) {
 		cin >> url;
 		ImageLink* link = convertToImageLink(url, &socketAddressNumber, imageNameArr);
 		socketArr[socketAddressNumber] = establishConnection(link->hostName, link->imagePath);
 		FD_SET(socketArr[socketAddressNumber], &readfds);
+		numLink += 1;
 		Queue::Element element = {qThreadID, numLink};
 		bool rez = queue.append(&element, 5000);
-		numLink++;
 		if (!rez) {
 			syncLog(&console, "failed to add new element to sync queue", &cout);
 		}
@@ -66,7 +66,10 @@ unsigned __stdcall runThreadPool(void* pArg)
 	{
 		Queue::Element element = {};
 		if (queue.remove(&element, INFINITE)) {
-			HANDLE h = (HANDLE)_beginthreadex(NULL, 0, downloadImg, &element.nLink, 0, &element.nLink);
+			unsigned int* arg;
+			arg = (unsigned int*)malloc(sizeof(unsigned int));
+			*arg = element.nLink;
+			HANDLE h = (HANDLE)_beginthreadex(NULL, 0, downloadImg, (void*)arg, 0, &element.nLink);
 		}
 	}
 	return 0;
@@ -80,17 +83,13 @@ SOCKET establishConnection(string host, string imagePath)
 
 	int result = WSAStartup(MAKEWORD(2, 2), &wd);
 	if (result != 0) {
-		EnterCriticalSection(&console);
-		cerr << "Can not load WSDATA library: " << result << "\n";
-		LeaveCriticalSection(&console);
+		syncLog(&console, "Can not load WSDATA library", &cout);
 		return result;
 	}
 
 	sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (sock == INVALID_SOCKET) {
-		EnterCriticalSection(&console);
-		cout << "Socket error : " << WSAGetLastError() << endl;
-		LeaveCriticalSection(&console);
+		syncLog(&console, "Socket error", &cout);
 		return sock;
 	}
 
@@ -99,9 +98,7 @@ SOCKET establishConnection(string host, string imagePath)
 
 	hostInfo = gethostbyname(host.c_str());
 	if (hostInfo == NULL) {
-		EnterCriticalSection(&console);
-		cout << "\nHostName： " << WSAGetLastError() << endl << "Incorrect link" << endl;
-		LeaveCriticalSection(&console);
+		syncLog(&console, "Incorrect link", &cout);
 		return sock;
 	}
 	sai.sin_port = htons(80);
@@ -109,9 +106,7 @@ SOCKET establishConnection(string host, string imagePath)
 
 	int check = connect(sock, (sockaddr*)&sai, sizeof(sai));
 	if (check == SOCKET_ERROR) {
-		EnterCriticalSection(&console);//вынести эти действия с критическими секциями в отдельный метод
-		cout << "\nConnect error： " << WSAGetLastError() << endl;
-		LeaveCriticalSection(&console);
+		syncLog(&console, "Connect error", &cout);
 		return sock;
 	}
 
@@ -119,62 +114,11 @@ SOCKET establishConnection(string host, string imagePath)
 
 	int sendInfo = send(sock, reqInfo.c_str(), reqInfo.size(), 0);
 	if (SOCKET_ERROR == sendInfo) {
-		EnterCriticalSection(&console);
-		cout << "\nSend error: " << WSAGetLastError() << endl;
-		LeaveCriticalSection(&console);
+		syncLog(&console, "Send error", &cout);
 		closesocket(sock);
 		return sock;
 	}
 	return sock;
-}
-
-void download(int numLink) {
-	char buf[1024];
-	image[numLink].open(imgDirIn + imageNameArr[numLink], ios::out | ios::binary); //вынесим константы
-	memset(buf, 0, sizeof(buf));
-	int n = recv(socketArr[numLink], buf, sizeof(buf) - 1, 0);
-	if (n == -1) {
-		EnterCriticalSection(&console);
-		cout << "\nError with socket data\n";
-		LeaveCriticalSection(&console);
-		return;
-	}
-	else {
-		char* cpos = strstr(buf, "\r\n\r\n");
-		image[numLink].write(cpos + strlen("\r\n\r\n"), n - (cpos - buf) - strlen("\r\n\r\n"));
-		EnterCriticalSection(&file);
-		WriteLogFile(imageNameArr[numLink], n);
-		LeaveCriticalSection(&file);
-	}
-
-	while (true) {
-		if (FD_ISSET(socketArr[numLink], &readfds)) {
-			memset(buf, 0, sizeof(buf));
-			n = recv(socketArr[numLink], buf, sizeof(buf) - 1, 0);
-			if (n > 0) {
-				image[numLink].write(buf, n);
-				EnterCriticalSection(&file);
-				WriteLogFile(imageNameArr[numLink], n);
-				LeaveCriticalSection(&file);
-			}
-			else if (n == 0) {
-				FD_CLR(socketArr[numLink], &readfds);
-				image[numLink].close();
-				EnterCriticalSection(&file);
-				WriteLogFile(imageNameArr[numLink], n);
-				LeaveCriticalSection(&file);
-				EnterCriticalSection(&console);
-				cout << "<------------file \"" + imageNameArr[numLink] + "\" is download------------>" << endl;
-				LeaveCriticalSection(&console);
-				break;
-			}
-			else if (n == -1) {
-				EnterCriticalSection(&console);
-				cout << "\nError with socket data\n";
-				LeaveCriticalSection(&console);
-			}
-		}
-	}
 }
 
 void WriteLogFile(string file, int bites)
@@ -188,7 +132,7 @@ void WriteLogFile(string file, int bites)
 	char answer_char[200];
 	string answer;
 
-	FILE* fileToSave = fopen(logFileName, "a");
+	FILE* fileToSave = fopen("dsa.txt", "a");
 
 	if (bites > 0) {
 		answer = "File: " + file + ", Bites: " + to_string(bites) + ", Time: " + (string)timeForAnswer;
@@ -205,25 +149,21 @@ void WriteLogFile(string file, int bites)
 
 unsigned __stdcall downloadImg(void* pArg)
 {
-	unsigned int* numPtr = (unsigned int*)pArg;
+	unsigned int* numPtr = static_cast<uintptr_t*>(pArg);
 	unsigned int numLink = *numPtr;
 	char buf[10240];
 	image[numLink].open(imgDirIn + imageNameArr[numLink], ios::out | ios::binary); //вынесим константы
 	memset(buf, 0, sizeof(buf));
 	int n = recv(socketArr[numLink], buf, sizeof(buf) - 1, 0);
 	if (n == -1) {
-		EnterCriticalSection(&console);
-		cout << "\nError with socket data\n";
-		LeaveCriticalSection(&console);
+		syncLog(&console, "failed to read socket data", &cout);
 		_endthreadex(0);
 		return 0;
 	}
 	else {
 		char* cpos = strstr(buf, "\r\n\r\n");
 		image[numLink].write(cpos + strlen("\r\n\r\n"), n - (cpos - buf) - strlen("\r\n\r\n"));
-		EnterCriticalSection(&file);
 		WriteLogFile(imageNameArr[numLink], n);
-		LeaveCriticalSection(&file);
 	}
 
 	while (true) {
@@ -232,32 +172,26 @@ unsigned __stdcall downloadImg(void* pArg)
 			n = recv(socketArr[numLink], buf, sizeof(buf) - 1, 0);
 			if (n > 0) {
 				image[numLink].write(buf, n);
-				EnterCriticalSection(&file);
 				WriteLogFile(imageNameArr[numLink], n);
-				LeaveCriticalSection(&file);
 			}
 			else if (n == 0) {
 				FD_CLR(socketArr[numLink], &readfds);
 				image[numLink].close();
-				EnterCriticalSection(&file);
 				WriteLogFile(imageNameArr[numLink], n);
-				LeaveCriticalSection(&file);
-				EnterCriticalSection(&console);
-				cout << "<------------file \"" + imageNameArr[numLink] + "\" is download------------>" << endl;
-				LeaveCriticalSection(&console);
+				syncLog(&console, "<------------file \"" + imageNameArr[numLink] + "\" is download------------>", &cout);
 				break;
 			}
 			else if (n == -1) {
-				EnterCriticalSection(&console);
-				cout << "\nError with socket data\n";
-				LeaveCriticalSection(&console);
+				syncLog(&console, "failed to read socket data", &cout);
 			}
 		}
 	}
+	_endthreadex(0);
+	return(0);
 }
 
 void syncLog(CRITICAL_SECTION* section, string message, ostream* target) {
 	EnterCriticalSection(section);
-	*target << message;
+	*target << message << endl;
 	LeaveCriticalSection(section);
 }
