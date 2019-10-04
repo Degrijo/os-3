@@ -13,6 +13,8 @@
 #include <Windows.h>
 #include <regex>
 #include "Constants.h"
+#include "Queue.h"
+#include "ImageLink.h"
 
 using namespace std;
 SOCKET socketArr[bufSize];
@@ -23,84 +25,50 @@ int socketAddressNumber = -1;
 char logFileName[fileNameLen];
 CRITICAL_SECTION console;
 CRITICAL_SECTION file;
+Queue queue(8);
 
 SOCKET establishConnection(string, string);
 void download(int);
 void WriteLogFile(string, int);
+unsigned __stdcall downloadImg(void* pArg);
+unsigned __stdcall runThreadPool(void* pArg);
+void syncLog(CRITICAL_SECTION* section, string message, ostream* target);
 
-class ImageLink {
-public: string hostName;
-public: string imagePath;
 
-	  ImageLink(string hostName, string imagePath)
-	  {
-		  this->hostName = hostName;
-		  this->imagePath = imagePath;
-	  }
-};
-
-ImageLink* convertToImageLink(string url);
 
 int main()
 {
-	time_t seconds = time(NULL);
-	tm* timeinfo = localtime(&seconds);
-	char format[] = "%d %H %M %S.txt";
-	strftime(logFileName, 80, format, timeinfo);
 	CreateDirectoryA(imgDir, 0);
-	string url;
-	int numLink = 0;
-
 	InitializeCriticalSection(&console);
-	InitializeCriticalSection(&file);
-
-	vector<thread> threads;//переделать, использовать не гоотовый объект(Джефри Лихтер Windows для проффесионалов)
-
-	/*cout << "Choose one:" << endl
-		 << "1)Input image url" << endl
-		 << "2)Run test on pre-prepared urls" << endl
-		 << "3)Exit" << endl;
-	while (true) {
-		cin >> numberOfChoose;
-		if (numberOfChoose == 1) {
-			cin >> url;
-			ImageLink* imageLink = convertToImageLink(url);
-			socketArr[socketAddressNumber] = establishConnection(imageLink -> hostName, imageLink->imagePath);
-			FD_SET(socketArr[socketAddressNumber], &readfds);
-			threads.push_back(thread(download, numLink));
-			numLink++;
-		}
-		else if (numberOfChoose == 2) {
-			ifstream link("test.txt");
-			while (getline(link, url)) {
-				ImageLink* imageLink = convertToImageLink(url);
-				socketArr[socketAddressNumber] = establishConnection(imageLink->hostName, imageLink->imagePath);
-				FD_SET(socketArr[socketAddressNumber], &readfds);
-				threads.push_back(thread(download, numLink));
-				numLink++;
-			}
-			link.close();
-		}
-		else if (numberOfChoose == 3) {
-			break;
-		}
-	}*/
+	unsigned int qThreadID=0;
+	string url = "";
+	unsigned int numLink = 0;
+	HANDLE threadsHandler = (HANDLE)_beginthreadex(NULL, 0, runThreadPool, NULL, 0, &qThreadID);
 	while (true) {
 		cin >> url;
-		ImageLink* imageLink = convertToImageLink(url);
-		socketArr[socketAddressNumber] = establishConnection(imageLink->hostName, imageLink->imagePath);
+		ImageLink* link = convertToImageLink(url, &socketAddressNumber, imageNameArr);
+		socketArr[socketAddressNumber] = establishConnection(link->hostName, link->imagePath);
 		FD_SET(socketArr[socketAddressNumber], &readfds);
-		threads.push_back(thread(download, numLink));
+		Queue::Element element = {qThreadID, numLink};
+		bool rez = queue.append(&element, 5000);
 		numLink++;
+		if (!rez) {
+			syncLog(&console, "failed to add new element to sync queue", &cout);
+		}
 	}
-	for (int numLink = 0; numLink <= threads.size() - 1; numLink++) {
-		threads[numLink].join();
-	}
-
-
-	DeleteCriticalSection(&file);
-	DeleteCriticalSection(&console);
 	system("pause");
+	return 0;
+}
+
+unsigned __stdcall runThreadPool(void* pArg)
+{
+	while (true)
+	{
+		Queue::Element element = {};
+		if (queue.remove(&element, INFINITE)) {
+			HANDLE h = (HANDLE)_beginthreadex(NULL, 0, downloadImg, &element.nLink, 0, &element.nLink);
+		}
+	}
 	return 0;
 }
 
@@ -161,8 +129,7 @@ SOCKET establishConnection(string host, string imagePath)
 }
 
 void download(int numLink) {
-	char buf[10240];
-
+	char buf[1024];
 	image[numLink].open(imgDirIn + imageNameArr[numLink], ios::out | ios::binary); //вынесим константы
 	memset(buf, 0, sizeof(buf));
 	int n = recv(socketArr[numLink], buf, sizeof(buf) - 1, 0);
@@ -210,37 +177,6 @@ void download(int numLink) {
 	}
 }
 
-ImageLink* convertToImageLink(string url) {
-
-	char temp[100];
-
-	regex pathPattern(pathRegex);
-	string imagePath = regex_replace(url, pathPattern, "$3");
-
-	regex hostPattern(hostRegex);
-	string hostName = regex_replace(url, hostPattern, "$2");
-
-	regex namePattern(pathRegex);
-	string addressUrl = regex_replace(url, namePattern, "$2");
-
-	url = addressUrl;
-
-	socketAddressNumber++;
-	imageNameArr[socketAddressNumber] = url;
-	int lenght = url.length();
-
-	for (int j = 0; j < lenght; j++) {
-		temp[j] = url[j];
-		if (temp[j] == '/') {
-			imageNameArr[socketAddressNumber][j] = '.';
-		}
-		else {
-			imageNameArr[socketAddressNumber][j] = url[j];
-		}
-	}
-	return new ImageLink(hostName, imagePath);
-}
-
 void WriteLogFile(string file, int bites)
 {
 	time_t seconds = time(NULL);
@@ -265,4 +201,63 @@ void WriteLogFile(string file, int bites)
 	}
 
 	fclose(fileToSave);
+}
+
+unsigned __stdcall downloadImg(void* pArg)
+{
+	unsigned int* numPtr = (unsigned int*)pArg;
+	unsigned int numLink = *numPtr;
+	char buf[10240];
+	image[numLink].open(imgDirIn + imageNameArr[numLink], ios::out | ios::binary); //вынесим константы
+	memset(buf, 0, sizeof(buf));
+	int n = recv(socketArr[numLink], buf, sizeof(buf) - 1, 0);
+	if (n == -1) {
+		EnterCriticalSection(&console);
+		cout << "\nError with socket data\n";
+		LeaveCriticalSection(&console);
+		_endthreadex(0);
+		return 0;
+	}
+	else {
+		char* cpos = strstr(buf, "\r\n\r\n");
+		image[numLink].write(cpos + strlen("\r\n\r\n"), n - (cpos - buf) - strlen("\r\n\r\n"));
+		EnterCriticalSection(&file);
+		WriteLogFile(imageNameArr[numLink], n);
+		LeaveCriticalSection(&file);
+	}
+
+	while (true) {
+		if (FD_ISSET(socketArr[numLink], &readfds)) {
+			memset(buf, 0, sizeof(buf));
+			n = recv(socketArr[numLink], buf, sizeof(buf) - 1, 0);
+			if (n > 0) {
+				image[numLink].write(buf, n);
+				EnterCriticalSection(&file);
+				WriteLogFile(imageNameArr[numLink], n);
+				LeaveCriticalSection(&file);
+			}
+			else if (n == 0) {
+				FD_CLR(socketArr[numLink], &readfds);
+				image[numLink].close();
+				EnterCriticalSection(&file);
+				WriteLogFile(imageNameArr[numLink], n);
+				LeaveCriticalSection(&file);
+				EnterCriticalSection(&console);
+				cout << "<------------file \"" + imageNameArr[numLink] + "\" is download------------>" << endl;
+				LeaveCriticalSection(&console);
+				break;
+			}
+			else if (n == -1) {
+				EnterCriticalSection(&console);
+				cout << "\nError with socket data\n";
+				LeaveCriticalSection(&console);
+			}
+		}
+	}
+}
+
+void syncLog(CRITICAL_SECTION* section, string message, ostream* target) {
+	EnterCriticalSection(section);
+	*target << message;
+	LeaveCriticalSection(section);
 }
