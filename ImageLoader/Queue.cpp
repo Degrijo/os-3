@@ -44,7 +44,7 @@ BOOL Queue::append(pElement element, DWORD milliseseconds)
 
 }
 
-BOOL Queue::remove(pElement element, DWORD milliseconds)
+BOOL Queue::pull(pElement element, DWORD milliseconds)
 {// ждем монопольного доступа к очереди
  // и появления в ней хотя бы одного элемента
 	BOOL fOk = (WaitForMultipleObjects(sizeof(mutex_semaphore)/sizeof(HANDLE), mutex_semaphore, TRUE, milliseconds) == WAIT_OBJECT_0);

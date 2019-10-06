@@ -1,5 +1,20 @@
 #pragma once
-const int bufSize = 1024;
-const int fileNameLen = 80;
-const char* imgDir = "./img";
-const char* imgDirIn = "./img/";
+const int BUFF_SIZE = 1024;
+const int FILE_NAME_LENGTH = 80;
+const char* IMAGE_DIRECTORY = "./img/";
+const char* START_DOWNOLOAD_IMAGE_MESSAGE = "Thread: %d start downnoload image";
+const char* LOG_FILE_PATTERN = "%Y-%m-%d %H.%M.log";
+const char* ADD_ELEMENT_IN_QUEUE_EXCEPTION_MESSAGE = "Failed to add new element to sync queue";
+const char* WSDATA_LOAD_EXCEPTION_MESSAGE = "Can't load WSDATA library";
+const char* SOCKET_INITIALIZATION_EXCEPTION_MESSAGE = "Can't initialize socket";
+const char* INCORRECT_LINK_EXCEPTION_MESSAGE = "Incorrect link was input";
+const char* CONNECTION_EXCEPTION_MESSAGE = "Can't establish connection with socket";
+const char* REQUEST_MESSAGE = "GET %s HTTP/1.1\r\nHost: %s\r\nConnection:Close\r\n\r\n";
+const int REQUEST_MESSAGE_LENGTH = 70;
+const char* SEND_REQUEST_EXCEPTION_MESSAGE = "Error occurred during send request";
+const char* TIME_TEMPLATE_IN_FILE = "%Y-%m-%d %H:%M:%S";
+const char* RESPONSE_DELIMETER = "\r\n\r\n";
+const char* IMAGE_STILL_DOWNLOADING_MESSAGE = "Image: %s is still downloading , Bites: %d, Time: %s";
+const char* IMAGE_NOT_DOWNLOADING_MESSAGE = "Image: %s don't downoload due to some problems,  Time: %s";
+const char* IMAGE_DOWNLOAD_SUCCESSFULLY_MESSAGE = "Image: %s downoload successfully,  Time: %s";
+const char* SOCKER_DATA_READ_EXCEPTION_MESSAGE = "Failed to read socket data";
