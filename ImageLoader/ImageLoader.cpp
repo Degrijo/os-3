@@ -53,7 +53,7 @@ int main() {
 		FD_SET(socketArr[socketAddressNumber], &readfds);
 		numLink += 1;
 		Queue::Element element = {qThreadID, numLink};
-		bool rez = queue.append(&element, 5000);
+		bool rez = queue.put(&element, 5000);
 		if (!rez) {
 			syncLog(&console, ADD_ELEMENT_IN_QUEUE_EXCEPTION_MESSAGE, &cout);
 		}

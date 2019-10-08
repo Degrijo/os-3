@@ -20,7 +20,7 @@ Queue::~Queue()
 
 }
 
-BOOL Queue::append(pElement element, DWORD milliseseconds)
+BOOL Queue::put(pElement element, DWORD milliseseconds)
 {
 	BOOL fOk = FALSE; DWORD dw = WaitForSingleObject(mutex, milliseseconds);
 
