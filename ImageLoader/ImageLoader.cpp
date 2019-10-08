@@ -26,25 +26,29 @@ int socketAddressNumber = -1;
 char logFileName[FILE_NAME_LENGTH];
 CRITICAL_SECTION console;
 CRITICAL_SECTION file;
-Queue queue(8);
+Queue queue(6);
 
 SOCKET establishConnection(string, string);
 unsigned __stdcall downloadImg(void* pArg);
 string format(const string& format, ...);
 unsigned __stdcall runThreadPool(void* pArg);
 void syncLog(CRITICAL_SECTION* section, string message, ostream* target);
+void runTests();
 
-int main() {
+int main(int argc, char* argv[]) {
 	time_t t = time(0);
 	struct tm* now = localtime(&t);
 	strftime(logFileName, 80, LOG_FILE_PATTERN, now);
-
 	CreateDirectoryA(IMAGE_DIRECTORY, 0);
 	InitializeCriticalSection(&console);
 	InitializeCriticalSection(&file);
 	unsigned int qThreadID=0;
 	string url = "";
 	unsigned int numLink = -1;
+	if (strcmp(argv[1], "test") == 0) {
+		runTests();
+		return 0;
+	}
 	HANDLE threadsHandler = (HANDLE)_beginthreadex(NULL, 0, runThreadPool, NULL, 0, &qThreadID);
 	while (true) {
 		cin >> url;
@@ -61,6 +65,37 @@ int main() {
 	system("pause");
 	return 0;
 }
+
+void testLinks() {
+	unsigned int qThreadID = 0;
+	HANDLE threadsHandler = (HANDLE)_beginthreadex(NULL, 0, runThreadPool, NULL, 0, &qThreadID);
+	
+	string url = "";
+	unsigned int numLink = -1;
+	vector<string> testCase{
+"http://localhost/1.png",
+"http://localhost/2.png",
+"http://localhost/3.png",
+"http://localhost/4.png",
+"http://localhost/5.png",
+"http://localhost/6.png" };
+	for (std::vector<string>::iterator it = testCase.begin(); it != testCase.end(); it++) {
+		ImageLink* link = convertToImageLink(url, &socketAddressNumber, imageNameArr);
+		socketArr[socketAddressNumber] = establishConnection(link->hostName, link->imagePath);
+		FD_SET(socketArr[socketAddressNumber], &readfds);
+		numLink += 1;
+		Queue::Element element = { qThreadID, numLink };
+		bool rez = queue.put(&element, 5000);
+		if (!rez) {
+			syncLog(&console, ADD_ELEMENT_IN_QUEUE_EXCEPTION_MESSAGE, &cout);
+		}
+	}
+}
+
+void runTests() {
+	testLinks();
+}
+
 
 unsigned __stdcall runThreadPool(void* pArg)
 {
