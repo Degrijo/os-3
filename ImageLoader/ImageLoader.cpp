@@ -1,5 +1,6 @@
 ﻿#define _CRT_SECURE_NO_WARNINGS   
 #define _WINSOCK_DEPRECATED_NO_WARNINGS
+#define _CRT_NO_VA_START_VALIDATION
 #pragma comment(lib, "ws2_32.lib")
 
 #include <cstdio>
@@ -17,32 +18,37 @@
 #include "ImageLink.h"
 
 using namespace std;
-SOCKET socketArr[bufSize];
-string imageNameArr[bufSize];
-fstream image[bufSize];
+SOCKET socketArr[BUFF_SIZE];
+string imageNameArr[BUFF_SIZE];
+fstream image[BUFF_SIZE];
 fd_set readfds;
 int socketAddressNumber = -1;
-char logFileName[fileNameLen];
+char logFileName[FILE_NAME_LENGTH];
 CRITICAL_SECTION console;
 CRITICAL_SECTION file;
-Queue queue(8);
+Queue queue(6);
 
 SOCKET establishConnection(string, string);
-void WriteLogFile(string, int);
 unsigned __stdcall downloadImg(void* pArg);
+string format(const string& format, ...);
 unsigned __stdcall runThreadPool(void* pArg);
 void syncLog(CRITICAL_SECTION* section, string message, ostream* target);
+void runTests();
 
-
-
-int main()
-{
-	CreateDirectoryA(imgDir, 0);
+int main(int argc, char* argv[]) {
+	time_t t = time(0);
+	struct tm* now = localtime(&t);
+	strftime(logFileName, 80, LOG_FILE_PATTERN, now);
+	CreateDirectoryA(IMAGE_DIRECTORY, 0);
 	InitializeCriticalSection(&console);
 	InitializeCriticalSection(&file);
 	unsigned int qThreadID=0;
 	string url = "";
 	unsigned int numLink = -1;
+	if (strcmp(argv[1], "test") == 0) {
+		runTests();
+		return 0;
+	}
 	HANDLE threadsHandler = (HANDLE)_beginthreadex(NULL, 0, runThreadPool, NULL, 0, &qThreadID);
 	while (true) {
 		cin >> url;
@@ -51,21 +57,52 @@ int main()
 		FD_SET(socketArr[socketAddressNumber], &readfds);
 		numLink += 1;
 		Queue::Element element = {qThreadID, numLink};
-		bool rez = queue.append(&element, 5000);
+		bool rez = queue.put(&element, 5000);
 		if (!rez) {
-			syncLog(&console, "failed to add new element to sync queue", &cout);
+			syncLog(&console, ADD_ELEMENT_IN_QUEUE_EXCEPTION_MESSAGE, &cout);
 		}
 	}
 	system("pause");
 	return 0;
 }
 
+void testLinks() {
+	unsigned int qThreadID = 0;
+	HANDLE threadsHandler = (HANDLE)_beginthreadex(NULL, 0, runThreadPool, NULL, 0, &qThreadID);
+	
+	string url = "";
+	unsigned int numLink = -1;
+	vector<string> testCase{
+"http://localhost/1.png",
+"http://localhost/2.png",
+"http://localhost/3.png",
+"http://localhost/4.png",
+"http://localhost/5.png",
+"http://localhost/6.png" };
+	for (std::vector<string>::iterator it = testCase.begin(); it != testCase.end(); it++) {
+		ImageLink* link = convertToImageLink(url, &socketAddressNumber, imageNameArr);
+		socketArr[socketAddressNumber] = establishConnection(link->hostName, link->imagePath);
+		FD_SET(socketArr[socketAddressNumber], &readfds);
+		numLink += 1;
+		Queue::Element element = { qThreadID, numLink };
+		bool rez = queue.put(&element, 5000);
+		if (!rez) {
+			syncLog(&console, ADD_ELEMENT_IN_QUEUE_EXCEPTION_MESSAGE, &cout);
+		}
+	}
+}
+
+void runTests() {
+	testLinks();
+}
+
+
 unsigned __stdcall runThreadPool(void* pArg)
 {
 	while (true)
 	{
 		Queue::Element element = {};
-		if (queue.remove(&element, INFINITE)) {
+		if (queue.pull(&element, INFINITE)) {
 			unsigned int* arg;
 			arg = (unsigned int*)malloc(sizeof(unsigned int));
 			*arg = element.nLink;
@@ -83,13 +120,13 @@ SOCKET establishConnection(string host, string imagePath)
 
 	int result = WSAStartup(MAKEWORD(2, 2), &wd);
 	if (result != 0) {
-		syncLog(&console, "Can not load WSDATA library", &cout);
+		syncLog(&console, WSDATA_LOAD_EXCEPTION_MESSAGE, &cout);
 		return result;
 	}
 
 	sock = socket(AF_INET, SOCK_STREAM, 0);
 	if (sock == INVALID_SOCKET) {
-		syncLog(&console, "Socket error", &cout);
+		syncLog(&console, SOCKET_INITIALIZATION_EXCEPTION_MESSAGE, &cout);
 		return sock;
 	}
 
@@ -98,7 +135,7 @@ SOCKET establishConnection(string host, string imagePath)
 
 	hostInfo = gethostbyname(host.c_str());
 	if (hostInfo == NULL) {
-		syncLog(&console, "Incorrect link", &cout);
+		syncLog(&console, INCORRECT_LINK_EXCEPTION_MESSAGE, &cout);
 		return sock;
 	}
 	sai.sin_port = htons(80);
@@ -106,64 +143,88 @@ SOCKET establishConnection(string host, string imagePath)
 
 	int check = connect(sock, (sockaddr*)&sai, sizeof(sai));
 	if (check == SOCKET_ERROR) {
-		syncLog(&console, "Connect error", &cout);
+		syncLog(&console, CONNECTION_EXCEPTION_MESSAGE, &cout);
 		return sock;
 	}
 
-	string  reqInfo = "GET " + imagePath + " HTTP/1.1\r\nHost: " + host + "\r\nConnection:Close\r\n\r\n";
-
-	int sendInfo = send(sock, reqInfo.c_str(), reqInfo.size(), 0);
+	char* requestMessage = new char[sizeof(imagePath) + sizeof(host) + REQUEST_MESSAGE_LENGTH];
+	sprintf(requestMessage, REQUEST_MESSAGE, imagePath.c_str(), host.c_str());
+	int sendInfo = send(sock, requestMessage, strlen(requestMessage), 0);
 	if (SOCKET_ERROR == sendInfo) {
-		syncLog(&console, "Send error", &cout);
+		syncLog(&console, SEND_REQUEST_EXCEPTION_MESSAGE, &cout);
 		closesocket(sock);
 		return sock;
 	}
+	delete(requestMessage);
 	return sock;
 }
 
-void WriteLogFile(string file, int bites)
-{
+string generateMessageOfImageDownoloading(string image, int bites) {
 	time_t seconds = time(NULL);
 	tm* timeinfo = localtime(&seconds);
-	char buffTime[] = "%H.%M.%S";
 	char timeForAnswer[100];
-	strftime(timeForAnswer, 80, buffTime, timeinfo);
+	strftime(timeForAnswer, 80, TIME_TEMPLATE_IN_FILE, timeinfo);
 
 	char answer_char[200];
 	string answer;
 
-	FILE* fileToSave = fopen("dsa.txt", "a");
-
 	if (bites > 0) {
-		answer = "File: " + file + ", Bites: " + to_string(bites) + ", Time: " + (string)timeForAnswer;
+		char message[1000];
+		sprintf(message, IMAGE_STILL_DOWNLOADING_MESSAGE, image.c_str(), bites, ((string)timeForAnswer).c_str());
+		answer = message;
 	}
 	else if (bites < 0) {
-		answer = "File: " + file + ", ERROR!" + ", Time: " + (string)timeForAnswer;
+		char message[1000];
+		sprintf(message, IMAGE_NOT_DOWNLOADING_MESSAGE, image.c_str(), ((string)timeForAnswer).c_str());
+		answer = message;
 	}
 	else {
-		answer = "<---" + file + " is download" + "--->" + " Time: " + (string)timeForAnswer;
+		char message[1000];
+		sprintf(message, IMAGE_DOWNLOAD_SUCCESSFULLY_MESSAGE, image.c_str(), ((string)timeForAnswer).c_str());
+		answer = message;
 	}
 
+	for (int j = 0; j < answer.length(); j++) {
+		answer_char[j] = answer[j];
+	}
+
+	answer_char[answer.length()] = '\0';
+	return answer_char;
+}
+
+void writeToLogFile(string stringToWrite) //формат лог файла переделать
+{
+	EnterCriticalSection(&file);
+	FILE* fileToSave = fopen(logFileName, "a");
+	fprintf(fileToSave, "%s\n", stringToWrite.c_str());
+	fflush(fileToSave);
 	fclose(fileToSave);
+	LeaveCriticalSection(&file);
 }
 
 unsigned __stdcall downloadImg(void* pArg)
 {
-	unsigned int* numPtr = static_cast<uintptr_t*>(pArg);
-	unsigned int numLink = *numPtr;
+	unsigned int numPtr = *((int*)pArg);
+	unsigned int numLink = numPtr;
+
+	int threadId = std::hash<std::thread::id>{}(std::this_thread::get_id());
+	string message = format(START_DOWNOLOAD_IMAGE_MESSAGE, threadId);
+	writeToLogFile(message);
+
 	char buf[10240];
-	image[numLink].open(imgDirIn + imageNameArr[numLink], ios::out | ios::binary); //вынесим константы
+	image[numLink].open(IMAGE_DIRECTORY + imageNameArr[numLink], ios::out | ios::binary); 
 	memset(buf, 0, sizeof(buf));
 	int n = recv(socketArr[numLink], buf, sizeof(buf) - 1, 0);
 	if (n == -1) {
-		syncLog(&console, "failed to read socket data", &cout);
+		syncLog(&console, START_DOWNOLOAD_IMAGE_MESSAGE, &cout);
 		_endthreadex(0);
 		return 0;
 	}
 	else {
-		char* cpos = strstr(buf, "\r\n\r\n");
-		image[numLink].write(cpos + strlen("\r\n\r\n"), n - (cpos - buf) - strlen("\r\n\r\n"));
-		WriteLogFile(imageNameArr[numLink], n);
+		char* cpos = strstr(buf, RESPONSE_DELIMETER);
+		image[numLink].write(cpos + strlen(RESPONSE_DELIMETER), n - (cpos - buf) - strlen(RESPONSE_DELIMETER));
+		string message = generateMessageOfImageDownoloading(imageNameArr[numLink], n);
+		writeToLogFile(message);
 	}
 
 	while (true) {
@@ -172,17 +233,19 @@ unsigned __stdcall downloadImg(void* pArg)
 			n = recv(socketArr[numLink], buf, sizeof(buf) - 1, 0);
 			if (n > 0) {
 				image[numLink].write(buf, n);
-				WriteLogFile(imageNameArr[numLink], n);
+				string message = generateMessageOfImageDownoloading(imageNameArr[numLink], n);
+				writeToLogFile(message);
 			}
 			else if (n == 0) {
 				FD_CLR(socketArr[numLink], &readfds);
 				image[numLink].close();
-				WriteLogFile(imageNameArr[numLink], n);
-				syncLog(&console, "<------------file \"" + imageNameArr[numLink] + "\" is download------------>", &cout);
+				string message = generateMessageOfImageDownoloading(imageNameArr[numLink], n);
+				writeToLogFile(message);
+				syncLog(&console, message, &cout);
 				break;
 			}
 			else if (n == -1) {
-				syncLog(&console, "failed to read socket data", &cout);
+				syncLog(&console, SOCKER_DATA_READ_EXCEPTION_MESSAGE, &cout);
 			}
 		}
 	}
@@ -194,4 +257,17 @@ void syncLog(CRITICAL_SECTION* section, string message, ostream* target) {
 	EnterCriticalSection(section);
 	*target << message << endl;
 	LeaveCriticalSection(section);
+}
+
+string format(const string& format, ...)
+{
+	va_list args;
+	va_start(args, format);
+	size_t len = std::vsnprintf(NULL, 0, format.c_str(), args);
+	va_end(args);
+	std::vector<char> vec(len + 1);
+	va_start(args, format);
+	std::vsnprintf(&vec[0], len + 1, format.c_str(), args);
+	va_end(args);
+	return &vec[0];
 }

@@ -19,6 +19,6 @@ private:
 public:
 	Queue(int maxElements);
 	~Queue();
-	BOOL append(pElement element, DWORD milliseseconds);
-	BOOL remove(pElement element, DWORD milliseconds);
+	BOOL put(pElement element, DWORD milliseseconds);
+	BOOL pull(pElement element, DWORD milliseconds);
 };
