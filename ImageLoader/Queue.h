@@ -20,5 +20,5 @@ public:
 	Queue(int maxElements);
 	~Queue();
 	BOOL put(pElement element, DWORD milliseseconds);
-	BOOL pull(pElement element, DWORD milliseconds);
+	BOOL pull(pElement element);
 };
