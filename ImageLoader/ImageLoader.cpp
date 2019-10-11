@@ -28,7 +28,7 @@ CRITICAL_SECTION console;
 CRITICAL_SECTION file;
 Queue queue(5);
 
-SOCKET establishConnection(string, string);
+SOCKET establishConnection(string*, string*);
 unsigned __stdcall downloadImg(void* pArg);
 string format(const string& format, ...);
 unsigned __stdcall runThreadPool(void* pArg);
@@ -37,17 +37,18 @@ void writeToLogFile(string stringToWrite);
 void start();
 void runTests();
 void logInfo(const char* messageToWrite);
+void startDownoloadProcess(string* url, int* numlink);
 
 int main(int argc, char* argv[]) {
-	printf("Program is starting");
+	printf(START_PROGRAM_MESSAGE);
 	time_t t = time(0);
 	struct tm* now = localtime(&t);
 	strftime(logFileName, 80, LOG_FILE_PATTERN, now);
 	CreateDirectoryA(IMAGE_DIRECTORY, 0);
 	InitializeCriticalSection(&console);
 	InitializeCriticalSection(&file);
-	cout << endl;
-	printf(argv[1]);
+	unsigned int qThreadID = 0;
+	HANDLE threadsHandler = (HANDLE)_beginthreadex(NULL, 0, runThreadPool, NULL, 0, &qThreadID);
 	if (strcmp(argv[1], TEST_MODE) == 0) {
 		runTests();
 	} else {
@@ -58,44 +59,39 @@ int main(int argc, char* argv[]) {
 }
 
 void start() {
-	unsigned int qThreadID = 0;
-	string url = "";
-	unsigned int numLink = -1;
-	HANDLE threadsHandler = (HANDLE)_beginthreadex(NULL, 0, runThreadPool, NULL, 0, &qThreadID);
+	string url;
+	int numLink = -1;
 	while (true) {
 		cin >> url;
-		ImageLink* link = convertToImageLink(url, &socketAddressNumber, imageNameArr);
-		socketArr[socketAddressNumber] = establishConnection(link->hostName, link->imagePath);
-		FD_SET(socketArr[socketAddressNumber], &readfds);
-		numLink += 1;
-		Queue::Element element = { qThreadID, numLink };
-		bool rez = queue.put(&element, 5000);
-		if (!rez) {
-			logInfo(ADD_ELEMENT_IN_QUEUE_EXCEPTION_MESSAGE);
-		}
+		startDownoloadProcess(&url, &numLink);
 	}
 }
 
 void runTests() {
-	unsigned int qThreadID = 0;
-	HANDLE threadsHandler = (HANDLE)_beginthreadex(NULL, 0, runThreadPool, NULL, 0, &qThreadID);
-	
-	string url = "";
-	unsigned int numLink = -1;
-	//check file existense
+	int numLink = -1;
+	string url;
 	ifstream link(TEST_FILE);
+	if (!link) {
+		logInfo(NO_FILE_FOR_TEST);
+		return;
+	}
 	while (getline(link, url)) {
-		ImageLink* link = convertToImageLink(url, &socketAddressNumber, imageNameArr);
-		socketArr[socketAddressNumber] = establishConnection(link->hostName, link->imagePath);
-		FD_SET(socketArr[socketAddressNumber], &readfds);
-		numLink += 1;
-		Queue::Element element = { numLink, numLink };
-		bool rez = queue.put(&element, 1000);
-		if (!rez) {
-			logInfo(ADD_ELEMENT_IN_QUEUE_EXCEPTION_MESSAGE);
-		}
+		startDownoloadProcess(&url, &numLink);
 	}
 	link.close();
+}
+
+void startDownoloadProcess(string* url, int* numlink) {
+	
+	ImageLink* link = convertToImageLink(*url, &socketAddressNumber, imageNameArr);
+	socketArr[socketAddressNumber] = establishConnection(&link->hostName, &link->imagePath);
+	FD_SET(socketArr[socketAddressNumber], &readfds);
+	(*numlink)++;
+	Queue::Element element = { (*numlink), (*numlink) };
+	bool rez = queue.put(&element, 1000);
+	if (!rez) {
+		logInfo(ADD_ELEMENT_IN_QUEUE_EXCEPTION_MESSAGE);
+	}
 }
 
 
@@ -106,7 +102,7 @@ unsigned __stdcall runThreadPool(void* pArg)
 		Queue::Element element = {};
 		if (queue.pull(&element)) {
 			unsigned int* arg;
-			arg = (unsigned int*)malloc(sizeof(unsigned int));
+			arg = (unsigned int*)malloc(sizeof(unsigned int)); 
 			*arg = element.nLink;
 			HANDLE h = (HANDLE)_beginthreadex(NULL, 1000, downloadImg, (void*)arg, 0, &element.nLink);
 		}
@@ -114,7 +110,7 @@ unsigned __stdcall runThreadPool(void* pArg)
 	return 0;
 }
 
-SOCKET establishConnection(string host, string imagePath)
+SOCKET establishConnection(string* host, string* imagePath) 
 {
 	WSADATA wd;
 	SOCKET sock;
@@ -135,7 +131,7 @@ SOCKET establishConnection(string host, string imagePath)
 	sockaddr_in sai = { AF_INET };
 	sai.sin_family = AF_INET;
 
-	hostInfo = gethostbyname(host.c_str());
+	hostInfo = gethostbyname((*host).c_str());
 	if (hostInfo == NULL) {
 		logInfo(INCORRECT_LINK_EXCEPTION_MESSAGE);
 		return sock;
@@ -150,7 +146,7 @@ SOCKET establishConnection(string host, string imagePath)
 	}
 
 	char* requestMessage = new char[sizeof(imagePath) + sizeof(host) + REQUEST_MESSAGE_LENGTH];
-	sprintf(requestMessage, REQUEST_MESSAGE, imagePath.c_str(), host.c_str());
+	sprintf(requestMessage, REQUEST_MESSAGE, (*imagePath).c_str(), (*host).c_str());
 	int sendInfo = send(sock, requestMessage, strlen(requestMessage), 0);
 	if (SOCKET_ERROR == sendInfo) {
 		logInfo(SEND_REQUEST_EXCEPTION_MESSAGE);
@@ -212,6 +208,7 @@ unsigned __stdcall downloadImg(void* pArg)
 	int n = recv(socketArr[numLink], buf, sizeof(buf) - 1, 0);
 	if (n == -1) {
 		logInfo(SOCKER_DATA_READ_EXCEPTION_MESSAGE);
+		free(pArg);
 		_endthreadex(0);
 		return 0;
 	}
@@ -243,6 +240,7 @@ unsigned __stdcall downloadImg(void* pArg)
 			}
 		}
 	}
+	free(pArg);
 	_endthreadex(0);
 	return(0);
 }

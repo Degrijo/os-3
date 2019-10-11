@@ -20,3 +20,5 @@ const char* IMAGE_DOWNLOAD_SUCCESSFULLY_MESSAGE = "%s[INFO] - Image: %s downoloa
 const char* SOCKER_DATA_READ_EXCEPTION_MESSAGE = "Failed to read socket data";
 const char* TEST_FILE = "test.txt";
 const char* TEST_MODE = "test";
+const char* START_PROGRAM_MESSAGE = "Program is starting\n";
+const char* NO_FILE_FOR_TEST = "There is no file for tests in current directory";
